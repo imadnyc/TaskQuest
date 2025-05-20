@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import 'screens/components/const/colors.dart';
 
 /// Enumerate all modes you plan to support
-enum AppTheme { Default, Dark, Blue, HighContrast }
-
+enum AppTheme { Default, Dark, Blue }
 /// Map each mode to its ThemeData
 final Map<AppTheme, ThemeData> appThemeData = {
   AppTheme.Default: ThemeData(
@@ -69,23 +68,13 @@ final Map<AppTheme, ThemeData> appThemeData = {
     colorScheme: ColorScheme.light(
       primary: Colors.blue,
       secondary: Colors.teal,
+      background: Colors.blue[50]!,
+      surface: Colors.white,
+    ),
+    appBarTheme: AppBarTheme(
+      backgroundColor: Colors.blue,
+      foregroundColor: Colors.white,
     ),
   ),
-  AppTheme.HighContrast: ThemeData(
-    brightness: Brightness.light,
-    primaryColor: Colors.pink,
-    scaffoldBackgroundColor: Colors.pink[50],
-    textTheme: const TextTheme(
-      bodyLarge: TextStyle(
-          fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
-      bodyMedium: TextStyle(
-          fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
-    ),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.pink,
-        foregroundColor: Color(0xFFFCE4EC),
-      ),
-    ),
-  ),
+
 };

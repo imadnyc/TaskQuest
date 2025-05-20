@@ -184,20 +184,6 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         Divider(),
 
-        // Manage friends
-        ListTile(
-          leading: Icon(Icons.people, color: primaryGreen),
-          title: Text('Manage Friends'),
-          trailing: Icon(Icons.arrow_forward_ios),
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => ManageFriendsPage()),
-            );
-          },
-        ),
-        Divider(),
-
         // Notification settings
         ListTile(
           leading: Icon(Icons.notifications, color: primaryGreen),

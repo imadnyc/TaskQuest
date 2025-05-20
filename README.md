@@ -18,7 +18,7 @@ TaskQuest is a gamified task management mobile app built with **Flutter** and po
 - 📅 **Calendar View**: See tasks by date
 - 💬 **Task Assistant**: Ask a chatbot to help break down tasks using OpenAI API
 - 🌗 **Theming**: Light and dark theme toggle
-- 📊 **Leaderboard**: See top-performing users (planned feature)
+- 📊 **Leaderboard**: See top-performing users
 
 ---
 

@@ -28,6 +28,7 @@ ios/Runner/GoogleService-Info.plist
 macos/Runner/GoogleService-Info.plist
 
 # Flutter/Dart/Pub
+**/local.properties
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
