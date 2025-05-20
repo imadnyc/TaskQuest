@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'screens/authentication_ui.dart';
-import 'screens/components/const/colors.dart';
-import 'screens/task_manager_page.dart';
 import 'theme.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 

@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'const/colors.dart';
-
 
 class ButtonWidget extends StatelessWidget {
   const ButtonWidget({super.key, required this.text, this.onPressed});
@@ -23,7 +21,6 @@ class ButtonWidget extends StatelessWidget {
             borderRadius: BorderRadius.circular(15),
           ),
         ),
-
       ),
     );
   }

@@ -43,6 +43,31 @@ class AuthenticationService {
     }
   }
 
+  // Sign in with Google Credential
+  Future<String?> signInWithGoogleCredential(AuthCredential credential) async {
+    try {
+      UserCredential userCredential = await _firebaseAuth.signInWithCredential(credential);
+      // Check if the user is new or existing to create Firestore document
+      if (userCredential.additionalUserInfo?.isNewUser ?? false) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredential.user!.uid)
+            .set({
+          'email': userCredential.user!.email,
+          'displayName': userCredential.user!.displayName,
+          'photoURL': userCredential.user!.photoURL,
+          'points': 0,
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true)); // Use merge to avoid overwriting if somehow exists
+      }
+      return "Signed in";
+    } on FirebaseAuthException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   // Sign out method
   Future<void> signOut() async {
     await _firebaseAuth.signOut();

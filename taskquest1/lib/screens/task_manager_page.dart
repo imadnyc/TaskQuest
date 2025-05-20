@@ -9,6 +9,7 @@ import 'calendar_page.dart';
 import 'leaderboard_page.dart';
 import 'settings_page.dart';
 import 'avatar_design_page.dart';
+import 'package:taskquest1/services/calendar_service.dart';
 import '/services/task_repository.dart';
 import 'chat_button.dart';
 
@@ -32,6 +33,7 @@ class TaskManagerPage extends StatefulWidget {
 class _TaskManagerPageState extends State<TaskManagerPage> {
   final TaskRepository _taskRepo = TaskRepository();
   final String _userId = FirebaseAuth.instance.currentUser!.uid;
+  final CalendarService _calendarService = CalendarService();
 
   final List<Map<String, dynamic>> _tasks = [];
   final List<Map<String, dynamic>> _completedTasks = [];
@@ -217,6 +219,7 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
       'notes': _taskNotesController.text.trim(),
     };
 
+    // Optimistically update UI
     setState(() {
       if (_editingIndex != null) {
         _tasks[_editingIndex!] = entry;
@@ -228,8 +231,53 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
       _calculateProgress();
     });
 
-    await _taskRepo.saveTask(_userId, entry);
-    Navigator.pop(context);
+    try {
+      await _taskRepo.saveTask(_userId, entry);
+
+      // Sync with Google Calendar if user is signed in
+      bool googleSignedIn = await _calendarService.isSignedIn();
+      if (googleSignedIn) {
+        try {
+          String? eventId = await _calendarService.createTaskEvent(
+            title: entry['task'] as String,
+            description: entry['notes'] as String?,
+            startTime: entry['dueDate'] as DateTime,
+            endTime: (entry['dueDate'] as DateTime).add(const Duration(hours: 1)), // Default 1 hour duration
+          );
+          if (eventId != null && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Task synced to Google Calendar.')),
+            );
+          } else if (mounted) {
+             ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not sync task to Google Calendar.')),
+            );
+          }
+        } catch (e) {
+          print('Error syncing task to Google Calendar: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Error syncing to Google Calendar: ${e.toString()}')),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      // Handle Firestore save error if necessary, or revert optimistic UI update
+      print("Error saving task to Firestore: $e");
+       if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Error saving task: ${e.toString()}')),
+            );
+        }
+      // Optionally revert UI changes if Firestore save fails
+      // For simplicity, not implemented here, but consider for production apps
+      return; // Don't pop if save failed
+    }
+    
+    if (mounted) {
+        Navigator.pop(context); // Pop dialog
+    }
   }
 
   void _toggleTaskCompletion(int index) async {

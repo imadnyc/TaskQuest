@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart'; // Import for GoogleSignInAccount
+import 'package:taskquest1/screens/authentication_ui.dart';
 import 'components/const/colors.dart';
 import 'avatar_design_page.dart';
 import 'manage_friends_page.dart';
 import '../theme.dart';  // for AppTheme enum
+import '../services/calendar_service.dart'; // Import CalendarService
+import '../services/authentication_service.dart'; // Import AuthenticationService
+import 'package:firebase_auth/firebase_auth.dart'; // Import FirebaseAuth
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   final AppTheme currentTheme;
   final ValueChanged<AppTheme> onThemeChanged;
 
@@ -13,6 +18,113 @@ class SettingsPage extends StatelessWidget {
     required this.currentTheme,
     required this.onThemeChanged,
   }) : super(key: key);
+
+  @override
+  _SettingsPageState createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  final CalendarService _calendarService = CalendarService();
+  final AuthenticationService _authService = AuthenticationService(FirebaseAuth.instance); // Add AuthenticationService
+  GoogleSignInAccount? _googleUser;
+  bool _isProcessingGoogleSignIn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkGoogleSignInStatus();
+  }
+
+  Future<void> _checkGoogleSignInStatus() async {
+    setState(() {
+      _isProcessingGoogleSignIn = true;
+    });
+    final isSignedIn = await _calendarService.isSignedIn();
+    if (isSignedIn) {
+      _googleUser = await _calendarService.signInWithGoogle(); // To get current user details
+    } else {
+      _googleUser = null;
+    }
+    if (mounted) { // Check if the widget is still in the tree
+      setState(() {
+        _isProcessingGoogleSignIn = false;
+      });
+    }
+  }
+
+  Future<void> _toggleGoogleCalendarSync() async {
+    setState(() {
+      _isProcessingGoogleSignIn = true;
+    });
+    try {
+      if (_googleUser == null) {
+        final account = await _calendarService.signInWithGoogle();
+        if (mounted) {
+          setState(() {
+            _googleUser = account;
+          });
+        }
+        if (account != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Connected to Google Calendar as ${account.email}')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Google Calendar connection cancelled.')),
+          );
+        }
+      } else {
+        await _calendarService.signOut();
+        if (mounted) {
+          setState(() {
+            _googleUser = null;
+          });
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Disconnected from Google Calendar.')),
+        );
+      }
+    } catch (e) {
+      print("Error toggling Google Calendar Sync: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}')),
+      );
+    }
+    if (mounted) {
+      setState(() {
+        _isProcessingGoogleSignIn = false;
+      });
+    }
+  }
+
+  Future<void> _logoutUser() async {
+    try {
+      // Sign out from Google Calendar Service (if connected)
+      if (_googleUser != null) {
+        await _calendarService.signOut();
+      }
+      // Sign out from Firebase
+      await _authService.signOut();
+
+      // Navigate back to AuthenticationUI and remove all previous routes
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => AuthenticationUI(
+            currentTheme: widget.currentTheme, // Pass theme arguments
+            onThemeChanged: widget.onThemeChanged,
+          )),
+          (Route<dynamic> route) => false, // This predicate removes all routes
+        );
+      }
+    } catch (e) {
+      print("Error during logout: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error logging out: ${e.toString()}')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +138,7 @@ class SettingsPage extends StatelessWidget {
             style: Theme.of(context).textTheme.headlineMedium,
           ),
           subtitle: DropdownButton<AppTheme>(
-            value: currentTheme,
+            value: widget.currentTheme,
             isExpanded: true,
             items: AppTheme.values.map((mode) {
               final name = mode.toString().split('.').last;
@@ -36,9 +148,23 @@ class SettingsPage extends StatelessWidget {
               );
             }).toList(),
             onChanged: (mode) {
-              if (mode != null) onThemeChanged(mode);
+              if (mode != null) widget.onThemeChanged(mode);
             },
           ),
+        ),
+        Divider(),
+
+        // Google Calendar Sync ListTile
+        ListTile(
+          leading: Icon(Icons.sync, color: primaryGreen),
+          title: Text(_googleUser == null
+              ? 'Connect Google Calendar'
+              : 'Google Calendar Connected'),
+          subtitle: _googleUser != null ? Text(_googleUser!.email) : null,
+          trailing: _isProcessingGoogleSignIn
+              ? CircularProgressIndicator()
+              : Icon(Icons.arrow_forward_ios),
+          onTap: _isProcessingGoogleSignIn ? null : _toggleGoogleCalendarSync,
         ),
         Divider(),
 
@@ -90,6 +216,14 @@ class SettingsPage extends StatelessWidget {
               ),
             );
           },
+        ),
+        Divider(),
+
+        // Logout Button
+        ListTile(
+          leading: Icon(Icons.exit_to_app, color: Colors.redAccent),
+          title: Text('Logout', style: TextStyle(color: Colors.redAccent)),
+          onTap: _logoutUser,
         ),
         Divider(),
       ],
