@@ -13,6 +13,7 @@ import 'avatar_design_page.dart';
 import 'package:taskquest1/services/calendar_service.dart';
 import '/services/task_repository.dart';
 import 'chat_button.dart';
+import '../services/notification_service.dart'; // Added NotificationService import
 
 // final TaskRepository _taskRepo = TaskRepository();
 // final String _userId = "yourUserId"; // Replace with real auth UID when ready
@@ -35,6 +36,7 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
   final TaskRepository _taskRepo = TaskRepository();
   final String _userId = FirebaseAuth.instance.currentUser!.uid;
   final CalendarService _calendarService = CalendarService();
+  final NotificationService _notificationService = NotificationService(); // Added NotificationService instance
 
   List<Map<String, dynamic>> _tasks = []; // App's native tasks
   List<Map<String, dynamic>> _completedTasks = [];
@@ -411,7 +413,6 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
       // Update the entry map with the Google Calendar Event ID if it was obtained
       if (eventIdFromGoogleSync != null) {
         entry['googleCalendarEventId'] = eventIdFromGoogleSync;
-        // Also update the specific task in the local _tasks list if it's a new task that just got synced
         if (_editingIndex == null && taskIndexInUi != -1 && taskIndexInUi < _tasks.length) {
             setState(() {
                 _tasks[taskIndexInUi]['googleCalendarEventId'] = eventIdFromGoogleSync;
@@ -420,6 +421,48 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
       }
 
       await _taskRepo.saveTask(_userId, entry); // Save task to Firestore
+
+      // Schedule notification for the task
+      if (entry['dueDate'] != null && (entry['dueDate'] as DateTime).isAfter(DateTime.now())) {
+        final DateTime dueDate = entry['dueDate'] as DateTime;
+        final DateTime notificationTime = dueDate.subtract(const Duration(minutes: 2)); // Temporarily set to 2 minutes for testing
+        // Ensure notification time is still in the future
+        if (notificationTime.isAfter(DateTime.now())) {
+          // Use task ID as notification ID. Convert timestamp to int.
+          // The ID from entry['id'] is likely a millisecondsSinceEpoch (int) or a Firestore document ID (String).
+          // For simplicity, assuming it's convertible to an int for notification ID.
+          // If task['id'] is a string, you might need a different strategy for int IDs or hash it.
+          // For this example, let's assume task ID is int or can be robustly hashed to int.
+          int notificationId = entry['id'] is int ? entry['id'] : entry['id'].hashCode;
+          // Ensure notificationId is within 32-bit integer range if it's a hash
+          notificationId = notificationId & 0x7FFFFFFF;
+
+          await _notificationService.scheduleNotification(
+            id: notificationId,
+            title: 'Task Due Soon: ${entry['task']}',
+            body: 'Your task "${entry['task']}" is due at ${DateFormat.jm().format(entry['dueDate'])}',
+            scheduledDate: notificationTime,
+          );
+        } else {
+            // If reminder time is in the past (e.g. task due in <1hr), schedule immediately or skip
+            // For simplicity, we can skip or schedule for a few seconds from now for testing
+            print("Reminder time is in the past, not scheduling or scheduling for very soon.");
+             // Example: Schedule for 5 seconds from now if it was in the past
+            // await _notificationService.scheduleNotification(
+            //   id: notificationId,
+            //   title: 'Task Starting Now!',
+            //   body: 'Your task "${entry['task']}" is starting.',
+            //   scheduledTime: DateTime.now().add(Duration(seconds: 5)),
+            //   payload: entry['id'].toString(),
+            // );
+        }
+      } else {
+        // If task has no due date or it's in the past, cancel any existing notification for this task ID (if any)
+        // (This handles editing a task to remove/past-date its due date)
+        int notificationId = entry['id'] is int ? entry['id'] : entry['id'].hashCode;
+        notificationId = notificationId & 0x7FFFFFFF;
+        await _notificationService.cancelNotification(notificationId);
+      }
 
     } catch (e) {
       print("Error during task save or Google Sync: $e");
@@ -450,8 +493,11 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
   }
 
   void _toggleTaskCompletion(int index) async {
+    final task = _tasks[index]; // Get task before modifying the list
+    final int notificationId = task['id'] is int ? task['id'] : task['id'].hashCode & 0x7FFFFFFF;
+
     setState(() {
-      final task = _tasks.removeAt(index);
+      _tasks.removeAt(index); // Remove from _tasks first
       task['completed'] = true;
       task['completedDate'] = DateTime.now();
       _completedTasks.add(task);
@@ -461,6 +507,7 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
 
     // Save updated task
     await _taskRepo.saveTask(_userId, _completedTasks.last);
+    await _notificationService.cancelNotification(notificationId); // Cancel notification
 
     // 🔥 Update points in Firestore
     int earnedPoints = switch (_completedTasks.last['priority']) {
@@ -496,6 +543,7 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
     final taskToDelete = _tasks[index];
     final String taskId = taskToDelete['id'].toString();
     final String? googleEventId = taskToDelete['googleCalendarEventId'] as String?;
+    final int notificationId = taskToDelete['id'] is int ? taskToDelete['id'] : taskToDelete['id'].hashCode & 0x7FFFFFFF;
 
     // Optimistically remove from UI first
     setState(() {
@@ -508,6 +556,7 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
     try {
       // Delete from Firestore
       await _taskRepo.deleteTask(_userId, taskId);
+      await _notificationService.cancelNotification(notificationId); // Cancel notification
 
       // Delete from Google Calendar if an event ID exists
       if (googleEventId != null && googleEventId.isNotEmpty) {

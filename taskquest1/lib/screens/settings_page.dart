@@ -8,6 +8,8 @@ import '../theme.dart';  // for AppTheme enum
 import '../services/calendar_service.dart'; // Import CalendarService
 import '../services/authentication_service.dart'; // Import AuthenticationService
 import 'package:firebase_auth/firebase_auth.dart'; // Import FirebaseAuth
+import '../services/notification_service.dart'; // Added NotificationService import
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // Added for direct Show() access
 
 class SettingsPage extends StatefulWidget {
   final AppTheme currentTheme;
@@ -224,6 +226,55 @@ class _SettingsPageState extends State<SettingsPage> {
           leading: Icon(Icons.exit_to_app, color: Colors.redAccent),
           title: Text('Logout', style: TextStyle(color: Colors.redAccent)),
           onTap: _logoutUser,
+        ),
+        Divider(),
+        // Test Notification Button
+        ListTile(
+          leading: Icon(Icons.notification_important, color: Colors.amber),
+          title: Text('Test Notification'),
+          subtitle: Text('Schedules a test notification in 5s'),
+          onTap: () async {
+            final NotificationService notificationService = NotificationService();
+            final int testId = DateTime.now().millisecondsSinceEpoch % 2147483647;
+            
+            // Simplified scheduling for testing
+            await notificationService.flutterLocalNotificationsPlugin.show(
+              testId,
+              '🧪 Test Notification (Simple)',
+              'This is a simple test notification fired from Settings!',
+              NotificationDetails(
+                android: AndroidNotificationDetails(
+                  'task_due_channel', // Ensure this channel ID matches the one created in NotificationService
+                  'Task Due Reminders',
+                  channelDescription: 'Channel for task due date reminders.',
+                  importance: Importance.high,
+                  priority: Priority.high,
+                  icon: '@mipmap/ic_launcher',
+                ),
+                iOS: DarwinNotificationDetails(
+                  presentAlert: true,
+                  presentBadge: true,
+                  presentSound: true,
+                ),
+              ),
+              payload: 'test_payload_from_settings_simple_$testId',
+            );
+
+            // Original scheduling call (commented out for now for this test)
+            // await notificationService.scheduleNotification(
+            //   id: testId,
+            //   title: '🧪 Test Notification',
+            //   body: 'This is a test notification fired from Settings!',
+            //   scheduledDate: DateTime.now().add(const Duration(seconds: 5)),
+            //   payload: 'test_payload_from_settings_$testId',
+            // );
+
+            if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Test notification scheduled in 5 seconds.')),
+                );
+            }
+          },
         ),
         Divider(),
       ],
