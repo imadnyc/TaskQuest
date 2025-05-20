@@ -123,7 +123,11 @@ class NotificationService {
           importance: Importance.max,
           priority: Priority.high,
         ),
-        iOS: DarwinNotificationDetails(),
+        iOS: DarwinNotificationDetails(
+          presentAlert: true, // Ensure alert is shown in foreground
+          presentBadge: true, // Ensure badge is updated in foreground
+          presentSound: true, // Ensure sound is played in foreground
+        ),
       ),
       androidAllowWhileIdle: true,
       uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime, // Added required parameter
