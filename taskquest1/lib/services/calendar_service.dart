@@ -138,4 +138,53 @@ class CalendarService {
       return null;
     }
   }
+
+  Future<List<GCalendar.Event>> getCalendarEventsList({
+    required DateTime startTime,
+    required DateTime endTime,
+    String calendarId = 'primary',
+  }) async {
+    final GCalendar.CalendarApi? calendarApi = await getCalendarApi();
+    if (calendarApi == null) {
+      print('Calendar API not initialized or user not signed in for fetching events.');
+      return [];
+    }
+
+    try {
+      final GCalendar.Events events = await calendarApi.events.list(
+        calendarId,
+        timeMin: startTime.toUtc(),
+        timeMax: endTime.toUtc(),
+        singleEvents: true, // Expands recurring events into single instances
+        orderBy: 'startTime',
+      );
+      return events.items ?? [];
+    } catch (e) {
+      print('Error fetching calendar events: $e');
+      return [];
+    }
+  }
+
+  Future<void> deleteTaskEvent({
+    required String eventId,
+    String calendarId = 'primary',
+  }) async {
+    final GCalendar.CalendarApi? calendarApi = await getCalendarApi();
+    if (calendarApi == null) {
+      print('Calendar API not initialized or user not signed in for deleting event.');
+      return;
+    }
+    if (eventId.isEmpty) {
+      print('Event ID is empty, cannot delete.');
+      return;
+    }
+
+    try {
+      await calendarApi.events.delete(calendarId, eventId);
+      print('Event deleted from Google Calendar: $eventId');
+    } catch (e) {
+      print('Error deleting event from Google Calendar: $e');
+      // Decide if you want to throw the error or handle it silently
+    }
+  }
 } 

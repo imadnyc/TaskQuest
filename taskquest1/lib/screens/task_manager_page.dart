@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:googleapis/calendar/v3.dart' as GCalendar; // Import for GCalendar.Event
 import '../theme.dart';
 import 'components/const/colors.dart';
 import 'components/button_widget.dart';
@@ -35,8 +36,11 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
   final String _userId = FirebaseAuth.instance.currentUser!.uid;
   final CalendarService _calendarService = CalendarService();
 
-  final List<Map<String, dynamic>> _tasks = [];
-  final List<Map<String, dynamic>> _completedTasks = [];
+  List<Map<String, dynamic>> _tasks = []; // App's native tasks
+  List<Map<String, dynamic>> _completedTasks = [];
+  List<Map<String, dynamic>> _allCalendarDisplayTasks = []; // Combined list for calendar
+  List<GCalendar.Event> _googleCalendarEvents = []; // Raw events from Google Calendar
+
   List<Map<String, dynamic>> _highPriorityTasks = [];
   List<Map<String, dynamic>> _mediumPriorityTasks = [];
   List<Map<String, dynamic>> _lowPriorityTasks = [];
@@ -68,12 +72,133 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
   int _currentIndex = 0;
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
+  bool _isLoadingCalendarEvents = false;
 
   @override
   void initState() {
     super.initState();
-    _groupTasksByPriority();
+    _loadAppTasks(); // Renamed for clarity
+    _fetchGoogleCalendarEventsForCurrentMonth();
     _calculateProgress();
+  }
+
+  Future<void> _loadAppTasks() async {
+    if (!mounted) return;
+    // Optionally show a loading indicator for app tasks
+    try {
+      final loadedTasks = await _taskRepo.loadTasks(_userId);
+      if (mounted) {
+        setState(() {
+          _tasks = loadedTasks;
+          _sortTasks(); // This will also call _groupTasksByPriority and _combineTasksForCalendarDisplay
+        });
+      }
+    } catch (e) {
+      print("Error loading app tasks from Firestore: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading your tasks: ${e.toString()}')),
+        );
+      }
+    }
+    // Now that app tasks are loaded (including their googleCalendarEventIds), fetch Google events
+    // This ensures appTaskSyncedEventIds in _combineTasksForCalendarDisplay is correctly populated.
+    _fetchGoogleCalendarEventsForCurrentMonth();
+  }
+
+  Future<void> _fetchGoogleCalendarEventsForCurrentMonth() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingCalendarEvents = true;
+    });
+
+    try {
+      final now = _focusedDay;
+      final firstDayOfMonth = DateTime(now.year, now.month, 1);
+      final lastDayOfMonth = DateTime(now.year, now.month + 1, 0); // Day 0 of next month is last day of current
+
+      final bool googleSignedIn = await _calendarService.isSignedIn();
+      if (googleSignedIn) {
+        final events = await _calendarService.getCalendarEventsList(
+          startTime: firstDayOfMonth,
+          endTime: lastDayOfMonth.add(Duration(days: 1)), // Ensure we capture events on the last day
+        );
+        if (mounted) {
+          setState(() {
+            _googleCalendarEvents = events;
+            _combineTasksForCalendarDisplay();
+          });
+        }
+      } else {
+         if (mounted) {
+          setState(() {
+            _googleCalendarEvents = []; // Clear if not signed in
+            _combineTasksForCalendarDisplay();
+          });
+        }
+      }
+    } catch (e) {
+      print("Error fetching Google Calendar events: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error fetching Google Calendar events: ${e.toString()}')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingCalendarEvents = false;
+        });
+      }
+    }
+  }
+
+  void _combineTasksForCalendarDisplay() {
+    // Create a set of googleCalendarEventIds from app tasks for efficient lookup
+    final Set<String> appTaskSyncedEventIds = _tasks
+        .where((task) => task['googleCalendarEventId'] != null && (task['googleCalendarEventId'] as String).isNotEmpty)
+        .map((task) => task['googleCalendarEventId'] as String)
+        .toSet();
+
+    // Transform app tasks
+    final List<Map<String, dynamic>> formattedAppTasks = _tasks.map((task) {
+      return {
+        'id': task['id'].toString(),
+        'task': task['task'],
+        'dueDate': task['dueDate'],
+        'priority': task['priority'] ?? 'Medium', // Default priority if null
+        'isGoogleEvent': false,
+        'notes': task['notes'],
+      };
+    }).toList();
+
+    // Transform Google Calendar events, excluding those that are echoes of synced app tasks
+    final List<Map<String, dynamic>> formattedGoogleEvents = _googleCalendarEvents
+        .where((gEvent) => gEvent.id != null && !appTaskSyncedEventIds.contains(gEvent.id))
+        .map((gEvent) {
+      return {
+        'id': gEvent.id!, // We've already checked gEvent.id != null in the where clause
+        'task': gEvent.summary ?? 'Google Calendar Event',
+        'dueDate': gEvent.start?.dateTime?.toLocal() ?? gEvent.start?.date?.toLocal() ?? DateTime.now(),
+        'priority': 'Medium', // Google Calendar events don't have priority in our app's sense
+        'isGoogleEvent': true,
+        'notes': gEvent.description,
+      };
+    }).toList();
+
+    setState(() {
+      _allCalendarDisplayTasks = [...formattedAppTasks, ...formattedGoogleEvents];
+      // Optional: Sort combined list if needed, e.g., by dueDate
+      _allCalendarDisplayTasks.sort((a, b) => (a['dueDate'] as DateTime).compareTo(b['dueDate'] as DateTime));
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Consider if re-fetching is needed more strategically
+    // For example, when the app comes to the foreground or user explicitly refreshes
+    _fetchGoogleCalendarEventsForCurrentMonth();
   }
 
   void _calculateProgress() {
@@ -208,6 +333,12 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
       _selectedDueTime!.minute,
     );
 
+    // Prepare the base entry. For existing tasks, try to get existing googleCalendarEventId.
+    String? existingGoogleCalendarEventId;
+    if (_editingIndex != null) {
+      existingGoogleCalendarEventId = _tasks[_editingIndex!]['googleCalendarEventId'] as String?;
+    }
+
     final entry = {
       'id': _editingIndex != null ? _tasks[_editingIndex!]['id'] : DateTime
           .now()
@@ -217,65 +348,103 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
       'priority': _selectedPriority,
       'completed': false,
       'notes': _taskNotesController.text.trim(),
+      'googleCalendarEventId': existingGoogleCalendarEventId, // Use existing if editing, null if new
     };
 
-    // Optimistically update UI
-    setState(() {
-      if (_editingIndex != null) {
-        _tasks[_editingIndex!] = entry;
-      } else {
+    // Optimistic UI update: Add or update in the local _tasks list
+    int taskIndexInUi = -1;
+    if (_editingIndex != null) {
+      taskIndexInUi = _editingIndex!;
+      setState(() {
+        _tasks[taskIndexInUi] = entry;
+      });
+    } else {
+      setState(() {
         _tasks.add(entry);
-      }
-      _sortTasks();
-      _groupTasksByPriority();
-      _calculateProgress();
+        taskIndexInUi = _tasks.length - 1; // Index of the newly added task
+      });
+    }
+    // Common UI updates after optimistic add/edit
+    setState(() {
+        _sortTasks();
+        _groupTasksByPriority();
+        _calculateProgress();
+        // _combineTasksForCalendarDisplay(); // This will be called after potential GCal sync
     });
 
     try {
-      await _taskRepo.saveTask(_userId, entry);
-
-      // Sync with Google Calendar if user is signed in
       bool googleSignedIn = await _calendarService.isSignedIn();
+      String? eventIdFromGoogleSync = null;
+
       if (googleSignedIn) {
-        try {
-          String? eventId = await _calendarService.createTaskEvent(
-            title: entry['task'] as String,
-            description: entry['notes'] as String?,
-            startTime: entry['dueDate'] as DateTime,
-            endTime: (entry['dueDate'] as DateTime).add(const Duration(hours: 1)), // Default 1 hour duration
-          );
-          if (eventId != null && mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Task synced to Google Calendar.')),
+        if (entry['googleCalendarEventId'] == null) { // Only attempt to create if no existing GCal ID
+          try {
+            String? createdEventId = await _calendarService.createTaskEvent(
+              title: entry['task'] as String,
+              description: entry['notes'] as String?,
+              startTime: entry['dueDate'] as DateTime,
+              endTime: (entry['dueDate'] as DateTime).add(const Duration(hours: 1)),
             );
-          } else if (mounted) {
-             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Could not sync task to Google Calendar.')),
-            );
-          }
-        } catch (e) {
-          print('Error syncing task to Google Calendar: $e');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error syncing to Google Calendar: ${e.toString()}')),
-            );
+            if (createdEventId != null) {
+              eventIdFromGoogleSync = createdEventId;
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Task synced to Google Calendar.')),
+                );
+              }
+            } else if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Could not sync task to Google Calendar.')),
+              );
+            }
+          } catch (e) {
+            print('Error syncing task to Google Calendar: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Error syncing to Google Calendar: ${e.toString()}')),
+              );
+            }
           }
         }
       }
-    } catch (e) {
-      // Handle Firestore save error if necessary, or revert optimistic UI update
-      print("Error saving task to Firestore: $e");
-       if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error saving task: ${e.toString()}')),
-            );
+
+      // Update the entry map with the Google Calendar Event ID if it was obtained
+      if (eventIdFromGoogleSync != null) {
+        entry['googleCalendarEventId'] = eventIdFromGoogleSync;
+        // Also update the specific task in the local _tasks list if it's a new task that just got synced
+        if (_editingIndex == null && taskIndexInUi != -1 && taskIndexInUi < _tasks.length) {
+            setState(() {
+                _tasks[taskIndexInUi]['googleCalendarEventId'] = eventIdFromGoogleSync;
+            });
         }
-      // Optionally revert UI changes if Firestore save fails
-      // For simplicity, not implemented here, but consider for production apps
-      return; // Don't pop if save failed
+      }
+
+      await _taskRepo.saveTask(_userId, entry); // Save task to Firestore
+
+    } catch (e) {
+      print("Error during task save or Google Sync: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error saving task: ${e.toString()}')),
+        );
+      }
+      // Minimal revert: if it was a new add, remove it from UI. Editing is harder to revert cleanly here.
+      if (_editingIndex == null && taskIndexInUi != -1) {
+          setState(() {
+              _tasks.removeAt(taskIndexInUi);
+              _sortTasks();
+              _groupTasksByPriority();
+              _calculateProgress();
+          });
+      }
+      // Do not pop dialog if save failed
+      if (mounted) _combineTasksForCalendarDisplay(); // Refresh display even on error
+      return;
     }
     
+    // If all successful
     if (mounted) {
+        _combineTasksForCalendarDisplay(); // Crucial: refresh display after all ops
         Navigator.pop(context); // Pop dialog
     }
   }
@@ -321,12 +490,64 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
     });
   }
 
-  void _deleteTask(int index) {
+  void _deleteTask(int index) async { // Make async
+    if (index < 0 || index >= _tasks.length) return;
+
+    final taskToDelete = _tasks[index];
+    final String taskId = taskToDelete['id'].toString();
+    final String? googleEventId = taskToDelete['googleCalendarEventId'] as String?;
+
+    // Optimistically remove from UI first
     setState(() {
       _tasks.removeAt(index);
       _groupTasksByPriority();
       _calculateProgress();
+      _combineTasksForCalendarDisplay(); 
     });
+
+    try {
+      // Delete from Firestore
+      await _taskRepo.deleteTask(_userId, taskId);
+
+      // Delete from Google Calendar if an event ID exists
+      if (googleEventId != null && googleEventId.isNotEmpty) {
+        bool googleSignedIn = await _calendarService.isSignedIn();
+        if (googleSignedIn) {
+          await _calendarService.deleteTaskEvent(eventId: googleEventId);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Task deleted from Google Calendar.')),
+            );
+          }
+        } else {
+          // If not signed into Google, the event remains but will be out of sync.
+          // Optionally inform user or log.
+          print('Not signed into Google. Could not delete event from Google Calendar.');
+        }
+      }
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Task deleted successfully.')),
+          );
+      }
+    } catch (e) {
+      print("Error deleting task: $e");
+      // If deletion fails, we should ideally add the task back to the UI
+      // For simplicity, current optimistic UI update is not reverted here.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error deleting task: ${e.toString()}')),
+        );
+         // Add task back to UI if deletion failed
+        setState(() {
+            _tasks.insert(index, taskToDelete);
+            _sortTasks(); // resort because insert might break order
+            _groupTasksByPriority();
+            _calculateProgress();
+            _combineTasksForCalendarDisplay(); 
+        });
+      }
+    }
   }
 
   void _sortTasks() {
@@ -335,6 +556,7 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
     } else {
       _tasks.sort((a, b) => b['id'].compareTo(a['id']));
     }
+    _combineTasksForCalendarDisplay(); // Re-combine after sorting app tasks
   }
 
   void _groupTasksByPriority() {
@@ -508,16 +730,33 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
   }
 
   Widget _buildCalendarPage() {
-    return CalendarPage(
-      tasks: _tasks,
-      selectedDay: _selectedDay,
-      focusedDay: _focusedDay,
-      onDaySelected: (selected, focused) {
-        setState(() {
-          _selectedDay = selected;
-          _focusedDay = focused;
-        });
-      },
+    return Column(
+      children: [
+        if (_isLoadingCalendarEvents) Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+        Expanded(
+          child: CalendarPage(
+            tasks: _allCalendarDisplayTasks, // Pass the combined list
+            selectedDay: _selectedDay,
+            focusedDay: _focusedDay,
+            onDaySelected: (selected, focused) {
+              bool needsRefresh = false;
+              if (focused.month != _focusedDay.month || focused.year != _focusedDay.year) {
+                needsRefresh = true;
+              }
+              setState(() {
+                _selectedDay = selected;
+                _focusedDay = focused;
+              });
+              if (needsRefresh) {
+                _fetchGoogleCalendarEventsForCurrentMonth();
+              }
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -599,7 +838,7 @@ class _TaskManagerPageState extends State<TaskManagerPage> {
         ),
       ),
       body: _buildTabContent(_currentIndex),
-      floatingActionButton: _currentIndex == 0
+      floatingActionButton: _currentIndex == 0 || _currentIndex == 1 // Allow adding tasks from home or calendar view
           ? Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [

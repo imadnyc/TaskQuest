@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:intl/intl.dart'; // For date formatting
 import 'components/const/colors.dart';
 
 class CalendarPage extends StatelessWidget {
@@ -16,8 +17,11 @@ class CalendarPage extends StatelessWidget {
     required this.onDaySelected,
   }) : super(key: key);
 
-  Color _getPriorityColor(String priority) {
-    switch (priority) {
+  Color _getEventColor(Map<String, dynamic> event) {
+    if (event['isGoogleEvent'] == true) {
+      return Colors.blue.shade700; // Distinct color for Google Calendar events
+    }
+    switch (event['priority']) {
       case 'High':
         return Colors.red;
       case 'Medium':
@@ -48,14 +52,15 @@ class CalendarPage extends StatelessWidget {
           calendarBuilders: CalendarBuilders(
             markerBuilder: (context, date, events) {
               if (events.isNotEmpty) {
-                String priority = (events.first as Map)['priority'];
+                // Use the color from the first event for the marker
+                final eventData = events.first as Map<String, dynamic>; 
                 return Positioned(
                   bottom: 1,
                   child: Container(
                     width: 6,
                     height: 6,
                     decoration: BoxDecoration(
-                      color: _getPriorityColor(priority),
+                      color: _getEventColor(eventData),
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -101,7 +106,7 @@ class CalendarPage extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8),
                         border: Border(
                           left: BorderSide(
-                            color: _getPriorityColor(task['priority']),
+                            color: _getEventColor(task), // Use updated color logic for list items
                             width: 10,
                           ),
                         ),
@@ -121,13 +126,25 @@ class CalendarPage extends StatelessWidget {
                             style: TextStyle(
                                 fontSize: 16, fontWeight: FontWeight.w500),
                           ),
-                          if (task['dueDate'] != null)
+                          if (task['dueDate'] != null) 
                             Text(
-                              '${DateTime.now().difference(task['dueDate']).inDays.abs()} days left',
+                              'Due: ${DateFormat('MMM dd, yyyy hh:mm a').format(task['dueDate'].toLocal())}', // More specific time
                               style: TextStyle(
                                   color: Colors.grey[600], fontSize: 13),
                             ),
-                          if (task['notes'] != null && task['notes'].isNotEmpty)
+                          if (task['isGoogleEvent'] == true && task['notes'] != null && task['notes'].isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4.0),
+                              child: Text(
+                                'Notes: ${task['notes']}',
+                                style: TextStyle(
+                                    color: Colors.grey[700],
+                                    fontSize: 14),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            )
+                          else if (task['isGoogleEvent'] != true && task['notes'] != null && task['notes'].isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(top: 4.0),
                               child: Row(
